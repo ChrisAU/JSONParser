@@ -92,11 +92,13 @@ struct Value<A> {
 // MARK: - Library - JSON Parsing Generic
 
 typealias JSON = [String: Any]
+typealias ParseError = [String]
+typealias ParseResult<T> = Result<ParseError, T>
 
 struct KeyedValue<A> {
     let description: String
     let key: String
-    let parse: (JSON) -> Result<[String], A>
+    let parse: (JSON) -> ParseResult<A>
 }
 
 extension KeyedValue {
@@ -106,7 +108,7 @@ extension KeyedValue {
         self.key = key
         self.parse = { json in
             guard let v = json[key] else { return .error(["missing \(key) (\(fullDescription))"]) }
-            return value.parse(v).map(Result<[String], A>.success) ?? .error(["invalid \(key) (\(fullDescription))"])
+            return value.parse(v).map(ParseResult<A>.success) ?? .error(["invalid \(key) (\(fullDescription))"])
         }
     }
     
@@ -124,7 +126,7 @@ extension KeyedValue {
         })
     }
     
-    func flatMap<B>(description: String, f: @escaping (A) -> Result<[String], B>) -> KeyedValue<B> {
+    func flatMap<B>(description: String, f: @escaping (A) -> ParseResult<B>) -> KeyedValue<B> {
         let combined = "\(self.description) -> \(description)"
         return KeyedValue<B>(description: combined, key: key, parse: { any in
             return self.parse(any).flatMap(f)
@@ -134,7 +136,7 @@ extension KeyedValue {
 
 struct Parser<A> {
     let descriptions: [String: String]
-    let parse: (JSON) -> Result<[String], A>
+    let parse: (JSON) -> ParseResult<A>
 }
 
 extension Parser {
@@ -181,6 +183,10 @@ let date = Value<Date>(description: "date", parse: { ($0 as? String).flatMap(dat
 
 // MARK: - Model
 
+protocol Parseable {
+    static var parse: (JSON) -> Result<[String], Self> { get }
+}
+
 struct Food {
     var name: String
 }
@@ -196,7 +202,7 @@ struct User {
 
 // MARK: - Parsing
 
-extension Food {
+extension Food: Parseable {
     static let create = { name in Food(name: name) }
     static let parse = parser.parse
     static let spec = parser.descriptions
@@ -205,7 +211,33 @@ extension Food {
     private static let _name = KeyedValue(description: "Food name", key: "name", value: string)
 }
 
-extension User {
+extension KeyedValue where A == JSON {
+    func tryParse<B: Parseable>() -> KeyedValue<B> {
+        return flatMap(description: description) { (json) -> ParseResult<B> in
+            return B.parse(json)
+        }
+    }
+}
+
+extension KeyedValue where A == [JSON] {
+    func tryParse<B: Parseable>() -> KeyedValue<[B]> {
+        return flatMap(description: description) { (array) -> ParseResult<[B]> in
+            let bs = array.map { value in
+                return B.parse(value)
+            }
+            return bs.reduce(ParseResult<[B]>(pure: []), { (lhs, rhs) -> ParseResult<[B]> in
+                switch (lhs, rhs) {
+                case let (.success(a), .success(b)): return .success(a <> [b])
+                case let (.success, .error(e)): return .error(e)
+                case let (.error(e), .success): return .error(e)
+                case let (.error(e1), .error(e2)): return .error(e1 <> e2)
+                }
+            })
+        }
+    }
+}
+
+extension User: Parseable {
     static let create = { id in { email in { city in { dob in { food in { otherFoods in User(id: id, email: email, city: city, dob: dob, food: food, otherFoods: otherFoods) } } } } } }
     static let parse = parser.parse
     static let spec = parser.descriptions
@@ -215,24 +247,8 @@ extension User {
     private static let _email = KeyedValue(description: "The email address", key: "email", value: string)
     private static let _city = KeyedValue(description: "The city", key: "city", value: string).optional
     private static let _dob = KeyedValue(description: "The date of birth", key: "dob", value: date)
-    private static let _food = KeyedValue(description: "The favourite food", key: "food", value: json)
-        .flatMap(description: "food") { value in
-            return Food.parse(value)
-        }
-    private static let _fallback = KeyedValue(description: "Fallback foods", key: "fallback", value: jsonArray)
-        .flatMap(description: "food array") { values -> Result<[String], [Food]> in
-            let foods = values.map { value in
-                return Food.parse(value)
-            }
-            return foods.reduce(Result<[String], [Food]>(pure: []), { (lhs, rhs) -> Result<[String], [Food]> in
-                switch (lhs, rhs) {
-                case let (.success(a), .success(b)): return .success(a <> [b])
-                case let (.success, .error(e)): return .error(e)
-                case let (.error(e), .success): return .error(e)
-                case let (.error(e1), .error(e2)): return .error(e1 <> e2)
-                }
-            })
-        }.optional
+    private static let _food: KeyedValue<Food> = KeyedValue(description: "The favourite food", key: "food", value: json).tryParse()
+    private static let _fallback: KeyedValue<[Food]?> = KeyedValue(description: "Fallback foods", key: "fallback", value: jsonArray).tryParse().optional
 }
 
 // MARK: - Results
