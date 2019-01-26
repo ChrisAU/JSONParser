@@ -134,6 +134,36 @@ extension KeyedValue {
     }
 }
 
+protocol Parseable {
+    static var parse: (JSON) -> Result<[String], Self> { get }
+}
+
+extension KeyedValue where A == JSON {
+    func tryParse<B: Parseable>() -> KeyedValue<B> {
+        return flatMap(description: description) { (json) -> ParseResult<B> in
+            return B.parse(json)
+        }
+    }
+}
+
+extension KeyedValue where A == [JSON] {
+    func tryParse<B: Parseable>() -> KeyedValue<[B]> {
+        return flatMap(description: description) { (array) -> ParseResult<[B]> in
+            let bs = array.map { value in
+                return B.parse(value)
+            }
+            return bs.reduce(ParseResult<[B]>(pure: []), { (lhs, rhs) -> ParseResult<[B]> in
+                switch (lhs, rhs) {
+                case let (.success(a), .success(b)): return .success(a <> [b])
+                case let (.success, .error(e)): return .error(e)
+                case let (.error(e), .success): return .error(e)
+                case let (.error(e1), .error(e2)): return .error(e1 <> e2)
+                }
+            })
+        }
+    }
+}
+
 struct Parser<A> {
     let descriptions: [String: String]
     let parse: (JSON) -> ParseResult<A>
@@ -183,10 +213,6 @@ let date = Value<Date>(description: "date", parse: { ($0 as? String).flatMap(dat
 
 // MARK: - Model
 
-protocol Parseable {
-    static var parse: (JSON) -> Result<[String], Self> { get }
-}
-
 struct Food {
     var name: String
 }
@@ -209,32 +235,6 @@ extension Food: Parseable {
     
     private static let parser: Parser<Food> = Parser(pure: create) <*> _name
     private static let _name = KeyedValue(description: "Food name", key: "name", value: string)
-}
-
-extension KeyedValue where A == JSON {
-    func tryParse<B: Parseable>() -> KeyedValue<B> {
-        return flatMap(description: description) { (json) -> ParseResult<B> in
-            return B.parse(json)
-        }
-    }
-}
-
-extension KeyedValue where A == [JSON] {
-    func tryParse<B: Parseable>() -> KeyedValue<[B]> {
-        return flatMap(description: description) { (array) -> ParseResult<[B]> in
-            let bs = array.map { value in
-                return B.parse(value)
-            }
-            return bs.reduce(ParseResult<[B]>(pure: []), { (lhs, rhs) -> ParseResult<[B]> in
-                switch (lhs, rhs) {
-                case let (.success(a), .success(b)): return .success(a <> [b])
-                case let (.success, .error(e)): return .error(e)
-                case let (.error(e), .success): return .error(e)
-                case let (.error(e1), .error(e2)): return .error(e1 <> e2)
-                }
-            })
-        }
-    }
 }
 
 extension User: Parseable {
