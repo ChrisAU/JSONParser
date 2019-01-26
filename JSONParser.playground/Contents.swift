@@ -66,6 +66,7 @@ struct Value<A> {
     let description: String
     let parse: (Any) -> A?
     
+    // TODO: Use a Predicate with Monoidal composition.
     func check(description: String, condition: @escaping (A) -> Bool) -> Value<A> {
         let combined = "\(self.description), \(description)"
         return Value(description: combined, parse: { (value) -> A? in
@@ -215,11 +216,11 @@ extension User {
     private static let _city = KeyedValue(description: "The city", key: "city", value: string).optional
     private static let _dob = KeyedValue(description: "The date of birth", key: "dob", value: date)
     private static let _food = KeyedValue(description: "The favourite food", key: "food", value: json)
-        .flatMap(description: " - json") { value in
+        .flatMap(description: "food") { value in
             return Food.parse(value)
         }
     private static let _fallback = KeyedValue(description: "Fallback foods", key: "fallback", value: jsonArray)
-        .flatMap(description: " - array") { values -> Result<[String], [Food]> in
+        .flatMap(description: "food array") { values -> Result<[String], [Food]> in
             let foods = values.map { value in
                 return Food.parse(value)
             }
