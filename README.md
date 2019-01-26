@@ -78,7 +78,7 @@ Each type will need to define it's rules, descriptions, and mappers if the type 
 This could probably be cleaned up with some more generic functions; however, for this POC I felt like this sufficed.
 
 ```
-extension User {
+extension User: Parseable {
     static let create = { id in { email in { city in { dob in { food in { otherFoods in User(id: id, email: email, city: city, dob: dob, food: food, otherFoods: otherFoods) } } } } } }
     static let parse = parser.parse
     static let spec = parser.descriptions
@@ -88,24 +88,8 @@ extension User {
     private static let _email = KeyedValue(description: "The email address", key: "email", value: string)
     private static let _city = KeyedValue(description: "The city", key: "city", value: string).optional
     private static let _dob = KeyedValue(description: "The date of birth", key: "dob", value: date)
-    private static let _food = KeyedValue(description: "The favourite food", key: "food", value: json)
-        .flatMap(description: "food") { value in
-            return Food.parse(value)
-        }
-    private static let _fallback = KeyedValue(description: "Fallback foods", key: "fallback", value: jsonArray)
-        .flatMap(description: "food array") { values -> Result<[String], [Food]> in
-            let foods = values.map { value in
-                return Food.parse(value)
-            }
-            return foods.reduce(Result<[String], [Food]>(pure: []), { (lhs, rhs) -> Result<[String], [Food]> in
-                switch (lhs, rhs) {
-                case let (.success(a), .success(b)): return .success(a <> [b])
-                case let (.success, .error(e)): return .error(e)
-                case let (.error(e), .success): return .error(e)
-                case let (.error(e1), .error(e2)): return .error(e1 <> e2)
-                }
-            })
-        }.optional
+    private static let _food: KeyedValue<Food> = KeyedValue(description: "The favourite food", key: "food", value: json).tryParse()
+    private static let _fallback: KeyedValue<[Food]?> = KeyedValue(description: "Fallback foods", key: "fallback", value: jsonArray).tryParse().optional
 }
 ```
 
